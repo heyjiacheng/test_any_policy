@@ -1,0 +1,17 @@
+{
+  "label": "tensor(0)",
+  "box": [
+    268.0692138671875,
+    214.30035400390625,
+    352.0210266113281,
+    294.6685485839844
+  ],
+  "score": 0.34314674139022827,
+  "iou": 1.0017859935760498,
+  "mask_area": 5013,
+  "paths": {
+    "detection_viz": "/home/supertc/repo/hamer/taskgrasp_img/000_jc/depth_align_out/frame_00019/grasp_seg/detection/detected_objects.png",
+    "mask": "/home/supertc/repo/hamer/taskgrasp_img/000_jc/depth_align_out/frame_00019/grasp_seg/segmentation/mask_tensor(0).png",
+    "overlay": "/home/supertc/repo/hamer/taskgrasp_img/000_jc/depth_align_out/frame_00019/grasp_seg/segmentation/segmentation_overlay_tensor(0).png"
+  }
+}

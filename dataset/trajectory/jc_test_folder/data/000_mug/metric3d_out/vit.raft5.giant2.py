@@ -1,0 +1,59 @@
+model = dict(
+    backbone=dict(
+        type='vit_giant2_reg',
+        prefix='backbones.',
+        out_channels=[1536, 1536, 1536, 1536],
+        drop_path_rate=0.0,
+        checkpoint=
+        '/mnt/nas/share/home/xugk/ckpt/vit/dinov2_vitg14_reg4_pretrain.pth'),
+    type='DensePredModel',
+    decode_head=dict(
+        type='RAFTDepthNormalDPT5',
+        in_channels=[1536, 1536, 1536, 1536],
+        use_cls_token=True,
+        feature_channels=[384, 768, 1536, 1536],
+        decoder_channels=[192, 384, 768, 1536, 1536],
+        up_scale=7,
+        hidden_channels=[192, 192, 192, 192],
+        n_gru_layers=3,
+        n_downsample=2,
+        iters=8,
+        slow_fast_gru=True,
+        num_register_tokens=4,
+        prefix='decode_heads.',
+        detach=False))
+data_basic = dict(
+    canonical_space=dict(img_size=(540, 960), focal_length=1000.0),
+    depth_range=(0, 1),
+    depth_normalize=(0.1, 200),
+    crop_size=(616, 1064),
+    clip_depth_range=(0.1, 200),
+    vit_size=(616, 1064))
+load_from = './weight/metric_depth_vit_giant2_800k.pth'
+cudnn_benchmark = True
+test_metrics = [
+    'abs_rel', 'rmse', 'silog', 'delta1', 'delta2', 'delta3', 'rmse_log',
+    'log10', 'sq_rel'
+]
+max_value = 200
+batchsize_per_gpu = 1
+thread_per_gpu = 1
+show_dir = '/home/supertc/repo/hamer/taskgrasp_img/000_jc/metric3d_out'
+batch_size = 1
+mldb_info = dict(
+    NYU=dict(
+        mldb_root='/mnt/nas/share/home/xugk/data/',
+        data_root='nyu',
+        test_annotations_path='nyu/test_annotation.json'),
+    checkpoint=dict(
+        mldb_root='/mnt/nas/share/home/xugk/ckpt',
+        convnext_tiny='convnext/convnext_tiny_22k_1k_384.pth',
+        convnext_small='convnext/convnext_small_22k_1k_384.pth',
+        convnext_base='convnext/convnext_base_22k_1k_384.pth',
+        convnext_large='convnext/convnext_large_22k_1k_384.pth',
+        vit_large='vit/dinov2_vitl14_pretrain.pth',
+        vit_small_reg='vit/dinov2_vits14_reg4_pretrain.pth',
+        vit_large_reg='vit/dinov2_vitl14_reg4_pretrain.pth',
+        vit_giant2_reg='vit/dinov2_vitg14_reg4_pretrain.pth'))
+log_file = '/home/supertc/repo/hamer/taskgrasp_img/000_jc/metric3d_out/20251031_113642.log'
+distributed = False
