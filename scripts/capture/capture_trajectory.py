@@ -3,7 +3,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 import torch
@@ -13,15 +13,15 @@ import tyro
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from mani_skill.envs.sapien_env import BaseEnv
-from mani_skill.utils.building import articulations
-from src.object_loader import ObjectConfig, get_dataset_objects, load_custom_objects
+from mani_skill.utils import sapien_utils
+from src.object_loader import ObjectConfig, ObjectLoader, load_custom_objects
 from src.camera_utils import capture_images, save_camera_params, setup_cameras
 from src.camera_config import CAMERA_VIEWS
 from src.gripper_viz import create_trajectory_grippers, remove_actors
 from src.trajectory_loader import load_trajectory
 from src.trajectory_executor import execute_trajectory_with_arm, grasp_and_lift, initialize_ik_solver
 from src.video_utils import generate_videos
-from src.env_utils import create_maniskill_env, remove_default_objects, load_objects_to_env, hide_goal_markers
+from src.env_utils import create_maniskill_env, remove_default_objects, load_objects_to_env, hide_goal_markers, set_robot_base_pose
 
 
 # ============================================================================
@@ -31,71 +31,123 @@ from src.env_utils import create_maniskill_env, remove_default_objects, load_obj
 # 使用方法:
 #
 # 1. 加载自定义 .obj 物体（默认方式）:
-#    python scripts/capture/capture_refactored.py
+#    python scripts/capture/capture_trajectory.py
+#    python scripts/capture/capture_trajectory.py --object-mesh-path dataset/customize/mug_obj/base.obj
 #
 # 2. 加载 PartNet-Mobility 数据集的 articulation 物体:
-#    python scripts/capture/capture_refactored.py --use-articulation --articulation-id 12536
+#    python scripts/capture/capture_trajectory.py --use-articulation --articulation-id 12536
 #
 # 3. 从其他数据集加载:
-#    python scripts/capture/capture_refactored.py --use-articulation --articulation-id <ID> --articulation-dataset <dataset-name>
+#    python scripts/capture/capture_trajectory.py --use-articulation --articulation-id <ID> --articulation-dataset <dataset-name>
+#
+# 4. 自定义物体位姿（适用于普通物体和 articulation 物体）:
+#    python scripts/capture/capture_trajectory.py --object-position -0.15 0 0.2 --object-rotation 90 0 0
+#
+# 5. 自定义机械臂基座位置:
+#    python scripts/capture/capture_trajectory.py --robot-position 0.5 0 0 --robot-rotation 0 0 45
+#
+# 6. 同时设置机械臂和物体位置:
+#    python scripts/capture/capture_trajectory.py --robot-position 0.5 0 0 --object-position 0.3 0 0.2
+#
+# 注意: tyro 的 tuple 参数语法为空格分隔的值，不需要括号或引号
 #
 # ============================================================================
 
-def get_my_objects() -> List[ObjectConfig]:
-    """配置要加载的物体"""
-    # 方式1: 从 dataset 加载
-    # return get_dataset_objects(max_objects=1, category_filter="bottle", auto_scale=True)
+def load_single_object(mesh_path: str, position: tuple = (0, 0, 0), rotation_deg: tuple = (90, 0, 0)) -> ObjectConfig:
+    """加载单个普通物体
 
-    # 方式2: 从自定义路径加载（推荐）
-    return load_custom_objects("dataset/customize/mug_obj/base.obj", auto_scale=True, target_size=0.1)
+    Args:
+        mesh_path: 物体的 mesh 文件路径
+        position: 物体初始位置 [x, y, z]
+        rotation_deg: 物体旋转欧拉角（单位：度）
 
-    # 方式3: 加载多个物体
-    # return load_custom_objects(
-    #     ["dataset/customize/mug_obj/base.obj", "dataset/customize/bottle_obj/model.obj"],
-    #     names=["my_mug", "my_bottle"],
-    #     auto_scale=True
-    # )
-
-
-def load_articulation(env: BaseEnv, model_id: str, dataset: str = "partnet-mobility", position: tuple = (-0.15, 0, 0)):
+    Returns:
+        ObjectConfig: 物体配置对象
     """
-    从数据集加载 articulation 物体
+    configs = load_custom_objects(mesh_path, auto_scale=True, target_size=0.1)
+    if not configs:
+        raise ValueError(f"无法加载物体: {mesh_path}")
+
+    # 设置位置和旋转
+    config = configs[0]
+    config.position = position
+    config.rotation = tuple(np.deg2rad(rotation_deg))  # 转换为弧度
+    return config
+
+
+def load_articulation(env: BaseEnv, model_id: str, dataset: str = "partnet-mobility", position: tuple = (-0.15, 0, 0), rotation_deg: tuple = (0, 0, 0)):
+    """从本地数据集加载 articulation 物体
 
     Args:
         env: ManiSkill 环境
         model_id: 模型 ID（例如 "12536"）
         dataset: 数据集名称（例如 "partnet-mobility"）
         position: 初始位置 [x, y, z]
+        rotation_deg: 初始旋转欧拉角 (rx, ry, rz)，单位：度
 
     Returns:
         加载的 articulation 对象
     """
     import sapien
+    from scipy.spatial.transform import Rotation
 
-    print(f"\n{'='*60}")
-    print(f"加载 Articulation 物体...")
-    print(f"{'='*60}")
     print(f"  数据集: {dataset}")
     print(f"  模型ID: {model_id}")
     print(f"  位置: {position}")
+    print(f"  旋转 (角度): {rotation_deg}")
 
-    # 使用 articulation builder 加载物体
-    builder = articulations.get_articulation_builder(
-        env.unwrapped.scene, f"{dataset}:{model_id}"
+    # 构建 URDF 文件路径
+    # 将连字符转换为下划线以匹配实际目录名
+    dataset_dir = dataset.replace("-", "_")
+    model_dir = Path(f"dataset/{dataset_dir}/{model_id}")
+
+    # 按优先级查找 URDF 文件
+    urdf_names = ["mobility_cvx.urdf", "mobility_fixed.urdf", "mobility.urdf"]
+    urdf_path = None
+    for urdf_name in urdf_names:
+        candidate_path = model_dir / urdf_name
+        if candidate_path.exists():
+            urdf_path = candidate_path
+            break
+
+    if urdf_path is None:
+        raise FileNotFoundError(f"在 {model_dir} 中未找到任何 URDF 文件 ({', '.join(urdf_names)})")
+
+    print(f"  URDF 文件: {urdf_path}")
+
+    # 创建 URDF loader（参考 get_partnet_mobility_builder 的实现）
+    scene = env.unwrapped.scene
+    loader = scene.create_urdf_loader()
+    loader.fix_root_link = False  # 允许物体移动
+    loader.scale = 1.0  # 可以根据需要调整缩放
+    loader.load_multiple_collisions_from_file = True
+
+    # 应用 URDF 配置（设置材质属性）
+    urdf_config = sapien_utils.parse_urdf_config(
+        dict(
+            material=dict(static_friction=1, dynamic_friction=1, restitution=0),
+        )
     )
+    sapien_utils.apply_urdf_config(loader, urdf_config)
+
+    # 解析 URDF 文件
+    articulation_builders = loader.parse(str(urdf_path))["articulation_builders"]
+    builder = articulation_builders[0]
+
+    # 将角度转换为四元数
+    rotation_rad = np.deg2rad(rotation_deg)  # 角度转弧度
+    quat = Rotation.from_euler('xyz', rotation_rad).as_quat()  # [x, y, z, w]
+    quaternion = [quat[3], quat[0], quat[1], quat[2]]  # 转换为 [w, x, y, z] 格式
 
     # 设置初始位姿，避免与其他物体碰撞
-    builder.initial_pose = sapien.Pose(p=position)
-
-    builder.fix_root_link = False
+    builder.initial_pose = sapien.Pose(p=position, q=quaternion)
 
     # 构建 articulation
-    articulation = builder.build(name="object")
+    articulation = builder.build(name="articulation_object")
 
     print(f"✓ 加载成功: {articulation.name}")
-    print(f"  关节数量: {len(articulation.joints)}")
-    print(f"  连杆数量: {len(articulation.links)}")
-    print(f"{'='*60}\n")
+    print(f"  - 关节数量: {len(articulation.joints)}")
+    print(f"  - 连杆数量: {len(articulation.links)}\n")
 
     return articulation
 
@@ -105,7 +157,7 @@ class Args:
     """命令行参数"""
     env_id: str = "PickCube-v1"
     trajectory_path: str = "dataset/trajectory/jc_test_folder/data/000_mug/trajectory/trajectory.json"
-    reference_camera: str = "front"  # 轨迹文件所在的参考相机坐标系
+    reference_camera: str = "behind"  # 轨迹文件所在的参考相机坐标系
     output_root: str = "outputs"
     image_width: int = 640
     image_height: int = 480
@@ -118,16 +170,24 @@ class Args:
     seed: Optional[int] = None
     max_trajectory_grippers: int = 30  # 最多显示的gripper数量
     gripper_alpha: float = 0.7  # gripper透明度
-    num_capture_steps: int = 100  # 捕获的图像步数
+    num_capture_steps: int = 10  # 捕获的图像步数
     execute_trajectory: bool = True  # 是否让机械臂执行轨迹
-    show_trajectory_viz: bool = False  # 是否显示轨迹可视化（半透明grippers）
+    show_trajectory_viz: bool = True  # 是否显示轨迹可视化（半透明grippers）
     ik_refine_steps: int = 2  # 每个轨迹点的IK细化步数
-    do_grasp_and_lift: bool = True  # 轨迹执行完后是否闭合夹爪并抬升20cm
+    do_grasp_and_lift: bool = False  # 轨迹执行完后是否闭合夹爪并抬升20cm
     num_grasp_wait_points: int = 10  # 闭合夹爪后的等待点数量（确保抓稳后再lift）
+    # 普通物体加载选项
+    object_mesh_path: str = "dataset/customize/mug_obj/base.obj"  # 物体的 mesh 文件路径
     # Articulation 加载选项
     use_articulation: bool = False  # 是否使用 articulation 物体（从 PartNet-Mobility 等数据集）
-    articulation_id: Optional[str] = None  # articulation 模型 ID（例如 "12536"）
+    articulation_id: Optional[str] = "12536"  # articulation 模型 ID（例如 "12536"）
     articulation_dataset: str = "partnet-mobility"  # 数据集名称
+    # 物体位姿（适用于普通物体和 articulation 物体）
+    object_position: tuple = (-0.05, 0.0, 0.15)  # 物体初始位置 [x, y, z]（米）
+    object_rotation: tuple = (0, 0, 10)  # 物体旋转欧拉角 [rx, ry, rz]（度）
+    # 机械臂基座位姿
+    robot_position: Optional[tuple] = None  # 机械臂基座位置 [x, y, z]（米），None 表示使用默认位置
+    robot_rotation: tuple = (0, 0, 0)  # 机械臂基座旋转欧拉角 [rx, ry, rz]（度）
 
 
 # ============================================================================
@@ -151,9 +211,21 @@ def main(args: Args):
     # 移除默认物体
     remove_default_objects(env)
 
+    # 设置机械臂基座位姿（如果指定）
+    if args.robot_position is not None:
+        print("=" * 60)
+        print("设置机械臂基座位姿...")
+        print("=" * 60)
+        set_robot_base_pose(env, args.robot_position, args.robot_rotation)
+        print()
+
     # 加载物体（articulation 或普通物体）
+    print("=" * 60)
     if args.use_articulation:
         # 加载 articulation 物体
+        print("加载 Articulation 物体...")
+        print("=" * 60)
+
         if not args.articulation_id:
             print("错误: 使用 articulation 模式时必须指定 --articulation-id 参数！")
             print("例如: --use-articulation --articulation-id 12536")
@@ -163,18 +235,26 @@ def main(args: Args):
             env=env,
             model_id=args.articulation_id,
             dataset=args.articulation_dataset,
-            position=(-0.15, 0, 0.15)
+            position=args.object_position,
+            rotation_deg=args.object_rotation
         )
     else:
-        # 加载自定义物体
-        object_configs = get_my_objects()
-        if not object_configs:
-            print("错误: 没有配置任何物体！")
-            return
+        # 加载普通物体
+        print("加载普通物体...")
+        print("=" * 60)
+        print(f"  Mesh 文件: {args.object_mesh_path}")
+        print(f"  位置: {args.object_position}")
+        print(f"  旋转 (角度): {args.object_rotation}")
 
-        loaded_objects = load_objects_to_env(env, object_configs, set_as_main_object=True)
-        if not loaded_objects:
-            return
+        object_config = load_single_object(
+            mesh_path=args.object_mesh_path,
+            position=args.object_position,
+            rotation_deg=args.object_rotation
+        )
+
+        loader = ObjectLoader(env.unwrapped.scene)
+        loaded_object = loader.load_object(object_config)
+        print(f"✓ 加载成功: {object_config.name}\n")
 
     # 设置相机
     cameras = setup_cameras(env.unwrapped.scene, CAMERA_VIEWS, args.shader, args.image_width, args.image_height)
@@ -185,11 +265,10 @@ def main(args: Args):
     print("=" * 60)
 
     reference_camera = cameras[args.reference_camera]
-    # 只加载原始轨迹，不添加额外的点
     trajectory_data, _ = load_trajectory(
         args.trajectory_path,
         reference_camera,
-        add_grasp_and_lift=False,  # 不在这里添加，后续单独调用 grasp_and_lift
+        add_grasp_and_lift=False,  
     )
 
     positions = [np.array(step["tcp_position"], dtype=np.float32) for step in trajectory_data]

@@ -1,5 +1,27 @@
 """
-多物体捕获脚本 - 加载和捕获自定义物体
+物体捕获脚本 - 加载和捕获单个物体（普通物体或 articulation 物体）
+
+使用方法:
+
+1. 加载默认的普通物体:
+   python scripts/capture/capture_custom_objects.py
+
+2. 加载指定的普通物体:
+   python scripts/capture/capture_custom_objects.py --object-mesh-path dataset/customize/mug_obj/base.obj
+
+3. 自定义普通物体的位置和旋转:
+   python scripts/capture/capture_custom_objects.py --object-position 0 0 0.15 --object-rotation 90 0 0
+
+4. 加载 articulation 物体:
+   python scripts/capture/capture_custom_objects.py --use-articulation --articulation-id 12536
+
+5. 自定义 articulation 物体的位置和旋转:
+   python scripts/capture/capture_custom_objects.py --use-articulation --articulation-id 12536 --object-position -0.15 0 0.2 --object-rotation 0 0 90
+
+注意：
+- tuple 参数使用空格分隔，不需要括号和引号
+- --object-position 和 --object-rotation 参数同时适用于普通物体和 articulation 物体
+- 一次只能加载一个物体（要么普通物体，要么 articulation 物体）
 """
 from __future__ import annotations
 
@@ -21,35 +43,118 @@ from PIL import Image
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import Camera, CameraConfig
 from mani_skill.utils import sapien_utils
-from object_loader import ObjectConfig, ObjectLoader, get_dataset_objects, load_custom_objects
+from object_loader import ObjectConfig, ObjectLoader, load_custom_objects
 
 
 # ============================================================================
 # 配置
 # ============================================================================
 
-def get_my_objects() -> List[ObjectConfig]:
-    """配置要加载的物体"""
-    # 方式1: 从 dataset 加载
-    # return get_dataset_objects(max_objects=1, category_filter="bottle", auto_scale=True)
+def load_single_object(mesh_path: str, position: tuple = (0, 0, 0), rotation_deg: tuple = (90, 0, 0)) -> ObjectConfig:
+    """加载单个普通物体
 
-    # 方式2: 从自定义路径加载（推荐）
-    return load_custom_objects("dataset/customize/mug_obj/base.obj", auto_scale=True, target_size=0.1)
+    Args:
+        mesh_path: 物体的 mesh 文件路径
+        position: 物体初始位置 [x, y, z]
+        rotation_deg: 物体旋转欧拉角（单位：度）
 
-    # 方式3: 加载多个物体
-    # return load_custom_objects(
-    #     ["dataset/customize/mug_obj/base.obj", "dataset/customize/bottle_obj/model.obj"],
-    #     names=["my_mug", "my_bottle"],
-    #     auto_scale=True
-    # )
+    Returns:
+        ObjectConfig: 物体配置对象
+    """
+    configs = load_custom_objects(mesh_path, auto_scale=True, target_size=0.1)
+    if not configs:
+        raise ValueError(f"无法加载物体: {mesh_path}")
+
+    # 设置位置和旋转
+    config = configs[0]
+    config.position = position
+    config.rotation = tuple(np.deg2rad(rotation_deg))  # 转换为弧度
+    return config
+
+
+def load_articulation(env: BaseEnv, model_id: str, dataset: str = "partnet-mobility", position: tuple = (-0.15, 0, 0), rotation_deg: tuple = (0, 0, 0)):
+    """从本地数据集加载 articulation 物体
+
+    Args:
+        env: ManiSkill 环境
+        model_id: 模型 ID（例如 "12536"）
+        dataset: 数据集名称（例如 "partnet-mobility"）
+        position: 初始位置 [x, y, z]
+        rotation_deg: 初始旋转欧拉角 (rx, ry, rz)，单位：度
+
+    Returns:
+        加载的 articulation 对象
+    """
+    print(f"  数据集: {dataset}")
+    print(f"  模型ID: {model_id}")
+    print(f"  位置: {position}")
+    print(f"  旋转 (角度): {rotation_deg}")
+
+    # 构建 URDF 文件路径
+    from pathlib import Path
+    # 将连字符转换为下划线以匹配实际目录名
+    dataset_dir = dataset.replace("-", "_")
+    model_dir = Path(f"dataset/{dataset_dir}/{model_id}")
+
+    # 按优先级查找 URDF 文件
+    urdf_names = ["mobility_cvx.urdf", "mobility_fixed.urdf", "mobility.urdf"]
+    urdf_path = None
+    for urdf_name in urdf_names:
+        candidate_path = model_dir / urdf_name
+        if candidate_path.exists():
+            urdf_path = candidate_path
+            break
+
+    if urdf_path is None:
+        raise FileNotFoundError(f"在 {model_dir} 中未找到任何 URDF 文件 ({', '.join(urdf_names)})")
+
+    print(f"  URDF 文件: {urdf_path}")
+
+    # 创建 URDF loader（参考 get_partnet_mobility_builder 的实现）
+    scene = env.unwrapped.scene
+    loader = scene.create_urdf_loader()
+    loader.fix_root_link = False  # 允许物体移动
+    loader.scale = 1.0  # 可以根据需要调整缩放
+    loader.load_multiple_collisions_from_file = True
+
+    # 应用 URDF 配置（设置材质属性）
+    urdf_config = sapien_utils.parse_urdf_config(
+        dict(
+            material=dict(static_friction=1, dynamic_friction=1, restitution=0),
+        )
+    )
+    sapien_utils.apply_urdf_config(loader, urdf_config)
+
+    # 解析 URDF 文件
+    articulation_builders = loader.parse(str(urdf_path))["articulation_builders"]
+    builder = articulation_builders[0]
+
+    # 将角度转换为四元数
+    from scipy.spatial.transform import Rotation
+    rotation_rad = np.deg2rad(rotation_deg)  # 角度转弧度
+    quat = Rotation.from_euler('xyz', rotation_rad).as_quat()  # [x, y, z, w]
+    quaternion = [quat[3], quat[0], quat[1], quat[2]]  # 转换为 [w, x, y, z] 格式
+
+    # 设置初始位姿，避免与其他物体碰撞
+    builder.initial_pose = sapien.Pose(p=position, q=quaternion)
+
+    # 构建 articulation
+    articulation = builder.build(name="articulation_object")
+
+    print(f"✓ 加载成功: {articulation.name}")
+    print(f"  - 关节数量: {len(articulation.joints)}")
+    print(f"  - 连杆数量: {len(articulation.links)}\n")
+
+    return articulation
 
 
 CAMERA_VIEWS = (
-    ("front", [0.3, 0.0, 0.2], [0.0, 0.0, 0.1]),
-    # ("top", [0.05, 0.0, 1.0], [0.0, 0.0, 0.1]),
-    # ("left", [0.2, 0.6, 0.45], [0.0, 0.0, 0.2]),
-    # ("right", [0.2, -0.6, 0.45], [0.0, 0.0, 0.2]),
-    # ("diagonal", [0.55, 0.35, 0.6], [0.0, 0.0, 0.2]),
+    ("front", [1.3, 0.0, 1.2], [0.0, 0.0, 0.1]),
+    ("behind", [-1.3, 0.0, 1.2], [0.0, 0.0, 0.1]),
+    ("top", [0.0, 0.0, 1.8], [0.0, 0.0, 0.1]),
+    ("left", [0.0, 1.3, 0.8], [0.0, 0.0, 0.1]),
+    ("right", [0.0, -1.3, 0.8], [0.0, 0.0, 0.1]),
+    ("diagonal", [1.0, 1.0, 1.2], [0.0, 0.0, 0.1]),
 )
 
 
@@ -57,18 +162,27 @@ CAMERA_VIEWS = (
 class Args:
     """命令行参数"""
     env_id: str = "PickCube-v1"
-    max_steps: int = 100
+    max_steps: int = 1
     output_root: str = "outputs"
     image_width: int = 640
     image_height: int = 480
-    shader: str = "rt" # 可选: "rt", "rt-fast", "default"
-    hide_robot: bool = False
+    shader: str = "default" # 可选: "rt", "rt-fast", "default"
+    hide_robot: bool = True
     hide_goal: bool = True
     save_video: bool = True
     video_fps: int = 10
     sim_backend: str = "auto"
     render_backend: str = "gpu"
     seed: Optional[int] = None
+    # 普通物体加载选项
+    object_mesh_path: str = "dataset/customize/mug_obj/base.obj"  # 普通物体的 mesh 文件路径
+    # Articulation 加载选项
+    use_articulation: bool = False  # 是否使用 articulation 物体（从 PartNet-Mobility 等数据集）
+    articulation_id: Optional[str] = "12536"  # articulation 模型 ID（例如 "12536"）
+    articulation_dataset: str = "partnet-mobility"  # 数据集名称
+    # 物体位姿（适用于普通物体和 articulation 物体）
+    object_position: tuple = (-0.05, 0.0, 0.15)  # 物体的初始位置 [x, y, z]
+    object_rotation: tuple = (0, 0, 10)  # 物体的初始旋转（欧拉角 [rx, ry, rz]，单位：度）
 
 
 # ============================================================================
@@ -172,23 +286,6 @@ def generate_videos(output_dir: Path, camera_uids: List[str], fps: int = 10):
             print(f"  ✓ {camera_uid}_depth.mp4 ({len(depth_frames)} 帧)")
 
     print(f"视频保存至: {video_dir}")
-
-
-def save_trajectory(trajectory: List[dict], output_dir: Path):
-    """保存轨迹数据"""
-    traj_dir = output_dir / "trajectory"
-    traj_dir.mkdir(exist_ok=True)
-
-    with (traj_dir / "trajectory.json").open("w") as f:
-        json.dump(trajectory, f, indent=2)
-
-    if trajectory:
-        np.savez(
-            traj_dir / "trajectory.npz",
-            steps=np.array([t["step"] for t in trajectory]),
-            tcp_position=np.array([t["tcp_position"] for t in trajectory]),
-            tcp_quaternion=np.array([t["tcp_quaternion"] for t in trajectory]),
-        )
 
 
 def save_camera_params(cameras: dict, output_dir: Path):
@@ -308,15 +405,6 @@ def _hide_robot(env):
                     rb.visibility = 0
 
 
-def _to_numpy(tensor_or_array):
-    """转换 tensor 为 numpy"""
-    if isinstance(tensor_or_array, torch.Tensor):
-        arr = tensor_or_array.detach().cpu().numpy()
-    else:
-        arr = tensor_or_array
-    return arr[0] if arr.ndim > 1 else arr
-
-
 def main(args: Args):
     """主函数"""
     print("=" * 60)
@@ -343,24 +431,42 @@ def main(args: Args):
         env.unwrapped.cube.remove_from_scene()
         print("✓ 已移除默认 cube\n")
 
-    # 加载自定义物体
+    # 加载物体（articulation 或普通物体）
     print("=" * 60)
-    print("加载自定义物体...")
-    print("=" * 60)
+    if args.use_articulation:
+        # 加载 articulation 物体
+        print("加载 Articulation 物体...")
+        print("=" * 60)
 
-    object_configs = get_my_objects()
-    if not object_configs:
-        print("错误: 没有配置任何物体！")
-        return
+        if not args.articulation_id:
+            print("错误: 使用 articulation 模式时必须指定 --articulation-id 参数！")
+            print("例如: --use-articulation --articulation-id 12536")
+            return
 
-    loader = ObjectLoader(env.unwrapped.scene)
-    loaded_objects = loader.load_multiple_objects(object_configs)
-    if not loaded_objects:
-        print("错误: 没有成功加载任何物体！")
-        return
+        env.unwrapped.cube = load_articulation(
+            env=env,
+            model_id=args.articulation_id,
+            dataset=args.articulation_dataset,
+            position=args.object_position,
+            rotation_deg=args.object_rotation
+        )
+    else:
+        # 加载普通物体
+        print("加载普通物体...")
+        print("=" * 60)
+        print(f"  Mesh 文件: {args.object_mesh_path}")
+        print(f"  位置: {args.object_position}")
+        print(f"  旋转 (角度): {args.object_rotation}")
 
-    env.unwrapped.cube = loaded_objects[0]
-    print(f"✓ 主要物体: {object_configs[0].name}\n")
+        object_config = load_single_object(
+            mesh_path=args.object_mesh_path,
+            position=args.object_position,
+            rotation_deg=args.object_rotation
+        )
+
+        loader = ObjectLoader(env.unwrapped.scene)
+        env.unwrapped.cube = loader.load_object(object_config)
+        print(f"✓ 加载成功: {object_config.name}\n")
 
     # 设置相机
     cameras = setup_cameras(env.unwrapped.scene, args.shader, args.image_width, args.image_height)
@@ -384,40 +490,44 @@ def main(args: Args):
     print(f"输出: {output_dir}")
     print("=" * 60 + "\n")
 
-    trajectory = []
-
     try:
         for step in range(args.max_steps):
-            action = env.action_space.sample() if env.action_space else None
-            _, _, terminated, truncated, _ = env.step(action)
+            # 对于 articulation 物体，直接更新场景而不调用 env.step()
+            # 这样可以避免环境的 evaluate() 方法访问不兼容的对象属性
+            if args.use_articulation:
+                # 可选：随机设置关节角度来产生不同的姿态
+                if hasattr(env.unwrapped.cube, 'set_qpos'):
+                    # 获取关节限制
+                    qpos = env.unwrapped.cube.get_qpos()
+                    # 随机扰动关节角度（可选）
+                    # qpos = qpos + torch.randn_like(qpos) * 0.1
+                    env.unwrapped.cube.set_qpos(qpos)
 
+                # 更新物理场景
+                env.unwrapped.scene.px.step()
+            else:
+                # 普通物体使用正常的 step
+                action = env.action_space.sample() if env.action_space else None
+                _, _, terminated, truncated, _ = env.step(action)
+                if (terminated | truncated).any():
+                    env.reset()
+
+            print(f"正在捕获第 {step + 1}/{args.max_steps} 帧...")
             capture_images(cameras, env.unwrapped.scene, output_dir, step)
-
-            # 记录轨迹
-            if env.unwrapped.agent:
-                tcp_pose = env.unwrapped.agent.tcp_pose
-                trajectory.append({
-                    "step": step,
-                    "tcp_position": _to_numpy(tcp_pose.p).tolist(),
-                    "tcp_quaternion": _to_numpy(tcp_pose.q).tolist(),
-                })
-
-            if (terminated | truncated).any():
-                env.reset()
 
             if (step + 1) % 50 == 0:
                 print(f"进度: {step + 1}/{args.max_steps}")
 
     except KeyboardInterrupt:
         print("\n用户中断")
+    except Exception as e:
+        print(f"\n错误: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         print("\n" + "=" * 60)
         print("保存结果...")
         print("=" * 60)
-
-        save_trajectory(trajectory, output_dir)
-        print(f"✓ 轨迹: {output_dir / 'trajectory'}")
-        print(f"✓ 图像: {output_dir / 'images'} ({len(trajectory)} 步)")
 
         # 保存相机参数
         camera_params = save_camera_params(cameras, output_dir)

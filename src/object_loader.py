@@ -283,7 +283,7 @@ def load_custom_objects(
     scale: float = 1.0,
     auto_scale: bool = False,
     target_size: float = 0.1,
-    density: float = 1000.0,
+    density: float = 400.0,
     positions: List[tuple] = None,
 ) -> List[ObjectConfig]:
     """从自定义路径加载 .obj 文件"""

@@ -97,10 +97,4 @@ def load_trajectory(
             "tcp_quaternion": quat_xyzw,
         })
 
-    # 旧版本的 add_grasp_and_lift 功能已移除
-    # 请使用 trajectory_executor.grasp_and_lift() 函数来处理抓取和抬升
-    if add_grasp_and_lift:
-        print("警告: add_grasp_and_lift 参数已废弃，将被忽略")
-        print("      请使用 trajectory_executor.grasp_and_lift() 函数单独处理抓取和抬升")
-
     return trajectory, 0

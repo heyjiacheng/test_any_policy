@@ -60,6 +60,10 @@ def execute_trajectory_with_arm(
 
             # 将世界坐标系的姿态转换到机械臂基座坐标系
             base_pose = env.unwrapped.agent.robot.pose
+            print(f"IK前基座位姿: 位置 {base_pose.p}, 四元数 {base_pose.q}")
+            
+            # import pdb; pdb.set_trace()
+            # target_tcp_pose_at_base = sapien.Pose(p=[-0.2,0,0], q=[-0.4480736,0.8939967,0, 0])
             target_tcp_pose_at_base = base_pose.inv() * target_tcp_pose
 
             # 转换为 Pose 对象（用于IK）

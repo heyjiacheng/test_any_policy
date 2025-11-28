@@ -7,6 +7,7 @@
 from typing import List, Optional
 
 import gymnasium as gym
+import numpy as np
 import torch
 
 from mani_skill.envs.sapien_env import BaseEnv
@@ -125,6 +126,37 @@ def load_objects_to_env(
         # print(f"✓ 主要物体: {object_configs[0].name}\n")
 
     return loaded_objects
+
+
+def set_robot_base_pose(
+    env: BaseEnv,
+    position: tuple = (0, 0, 0),
+    rotation_deg: tuple = (0, 0, 0)
+) -> None:
+    """
+    设置机械臂基座的位姿
+
+    Args:
+        env: ManiSkill 环境
+        position: 基座位置 [x, y, z] (米)
+        rotation_deg: 基座旋转欧拉角 [rx, ry, rz] (度)
+    """
+    import sapien
+    from scipy.spatial.transform import Rotation
+
+    if not hasattr(env.unwrapped, 'agent') or not hasattr(env.unwrapped.agent, 'robot'):
+        print("警告: 环境中没有找到机械臂 agent")
+        return
+
+    # 将角度转换为四元数
+    rotation_rad = np.deg2rad(rotation_deg)
+    quat = Rotation.from_euler('xyz', rotation_rad).as_quat()  # [x, y, z, w]
+    quaternion = [quat[3], quat[0], quat[1], quat[2]]  # 转换为 [w, x, y, z] 格式
+
+    # 设置机械臂基座位姿
+    new_pose = sapien.Pose(p=position, q=quaternion)
+    env.unwrapped.agent.robot.set_pose(new_pose)
+
 
 
 def hide_goal_markers(env: BaseEnv) -> None:
