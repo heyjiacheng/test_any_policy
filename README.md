@@ -79,6 +79,26 @@ Execute manipulation tasks using the GraspVLA vision-language-action policy.
 python scripts/graspvla/run_graspvla.py --instruction "pick up the mug"
 ```
 
+---
+
+### GraspVLA with PickClutterYCB (`run_graspvla_ycb.py`)
+
+Execute manipulation tasks using GraspVLA policy with ManiSkill's PickClutterYCB-v1 environment (default YCB objects).
+
+> ⚠️ **Important**: Before running, launch the GraspVLA server (same as above).
+
+#### 🎯 Basic Examples
+
+**Default scene:**
+```bash
+python scripts/graspvla/run_graspvla_ycb.py --instruction "pick up the object"
+```
+
+**Fixed scene (reproducible):**
+```bash
+python scripts/graspvla/run_graspvla_ycb.py --instruction "grasp the mug" --seed 42
+```
+
 
 ### Capture Objects (`capture_custom_objects.py`)
 
