@@ -14,7 +14,6 @@ import zmq
 from collections import deque
 from typing import Dict, Tuple, Optional, Any
 import numpy.typing as npt
-import torch
 
 
 class RemoteAgent:
@@ -63,12 +62,17 @@ class RemoteAgent:
         self.pred_actions = deque()
         self.finger_state = self.GRIPPER_OPEN
 
-    def get_current_proprio(self, tcp_pose: np.ndarray, gripper_state: float) -> npt.NDArray[np.float64]:
+    def get_current_proprio(self, tcp_pose: np.ndarray, gripper_state: float = 0.0) -> npt.NDArray[np.float64]:
         """Get the current proprioceptive state of the robot.
+
+        Note: Following LIBERO implementation, we use the internally tracked finger_state
+        rather than the observed gripper_state. This ensures consistency with the action
+        commands sent to the robot.
 
         Args:
             tcp_pose: Tool center point pose [x, y, z, qw, qx, qy, qz]
             gripper_state: Current gripper state (0=closed, 1=open in ManiSkill convention)
+                          Note: This parameter is kept for API compatibility but not used.
 
         Returns:
             current_proprio: Array of shape (7,) containing [x, y, z, rx, ry, rz, gripper_state].
@@ -81,14 +85,12 @@ class RemoteAgent:
         # Note: transforms3d expects [qw, qx, qy, qz] format
         euler = t3d.euler.quat2euler(quaternion, axes='sxyz')
 
-        # Convert gripper state: ManiSkill uses 0-1 (0=closed, 1=open)
-        # GraspVLA uses -1 to 1 (-1=closed, 1=open)
-        gripper_normalized = gripper_state * 2 - 1
-
+        # Use internally tracked finger_state (matching LIBERO implementation)
+        # finger_state is already in GraspVLA convention: -1=closed, 1=open
         current_proprio = np.concatenate([
             position,
             euler,
-            np.array([gripper_normalized])
+            np.array([self.finger_state])
         ])
         return current_proprio
 
@@ -121,13 +123,16 @@ class RemoteAgent:
 
         # Convert gripper action back to ManiSkill convention
         # GraspVLA: -1 (close), 0 (no change), 1 (open)
-        # ManiSkill: 0 (close), 1 (open), with smooth transitions
+        # ManiSkill: 0 (close), 1 (open)
         if action[6] == -1:
             action[6] = 0.0  # Close
         elif action[6] == 1:
             action[6] = 1.0  # Open
-        else:  # action[6] == 0
-            action[6] = obs['gripper_state']  # Keep current state
+        else:  # action[6] == 0 (no change)
+            # Use internally tracked finger_state instead of observed gripper_state
+            # This prevents gripper oscillation from observation noise
+            # Convert finger_state from GraspVLA convention (-1/1) to ManiSkill (0/1)
+            action[6] = (self.finger_state + 1) / 2
 
         return action, bbox
 

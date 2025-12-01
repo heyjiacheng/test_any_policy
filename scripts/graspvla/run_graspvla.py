@@ -81,7 +81,7 @@ class Args:
     articulation_dataset: str = "partnet-mobility"
 
     # Object pose
-    object_position: tuple = (0.0, 0.0, 0.0)  # [x, y, z] in meters
+    object_position: tuple = (-0.1, 0.0, 0.0)  # [x, y, z] in meters
     object_rotation: tuple = (90, 0, 0)  # [rx, ry, rz] in degrees
 
     # Robot pose
