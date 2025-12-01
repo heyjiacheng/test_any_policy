@@ -1,6 +1,6 @@
-# 🤖 sim2real_maniskill
+# 🤖 test_any_policy
 
-A ManiSkill-based project for capturing multi-view images and trajectory data for sim-to-real robotic manipulation.
+A ManiSkill-based project for visualizing any robotic policy or trajectory data.
 
 ### 📦 Installation
 
@@ -61,7 +61,26 @@ You can specify a custom trajectory with `--trajectory-path`.
 
 ## 📸 Usage
 
-### 1️⃣ Capture Objects (`capture_custom_objects.py`)
+### GraspVLA Policy (`run_graspvla.py`)
+
+Execute manipulation tasks using the GraspVLA vision-language-action policy.
+
+> ⚠️ **Important**: Before running this script, you must launch the GraspVLA server separately:
+> ```bash
+> python others/GraspVLA/vla_network/scripts/serve.py \
+>     --port 6666 \
+>     --path <path_to_model>
+> ```
+
+#### 🎯 Basic Examples
+
+**Default object with instruction:**
+```bash
+python scripts/graspvla/run_graspvla.py --instruction "pick up the mug"
+```
+
+
+### Capture Objects (`capture_custom_objects.py`)
 
 Capture multi-view images of objects without robot interaction.
 
@@ -97,7 +116,7 @@ python scripts/capture/capture_custom_objects.py --object-position 0 0 0.15 --ob
 
 ---
 
-### 2️⃣ Capture Trajectory (`capture_trajectory.py`)
+### Capture Trajectory (`capture_trajectory.py`)
 
 Execute robot trajectories and capture the entire manipulation process.
 
@@ -147,46 +166,6 @@ python scripts/capture/capture_trajectory.py --execute-trajectory False
 
 ---
 
-### 3️⃣ GraspVLA Policy (`run_graspvla.py`)
-
-Execute manipulation tasks using the GraspVLA vision-language-action policy.
-
-> ⚠️ **Important**: Before running this script, you must launch the GraspVLA server separately:
-> ```bash
-> python others/GraspVLA/vla_network/scripts/serve.py \
->     --port 6666 \
->     --path <path_to_model>
-> ```
-
-#### 🎯 Basic Examples
-
-**Default object with instruction:**
-```bash
-python scripts/graspvla/run_graspvla.py --instruction "pick up the mug"
-```
-
-**With custom object:**
-```bash
-python scripts/graspvla/run_graspvla.py \
-    --instruction "pick up the bottle" \
-    --object-mesh-path dataset/customize/bottle/base.obj
-```
-
-**With articulated object:**
-```bash
-python scripts/graspvla/run_graspvla.py \
-    --instruction "open the cabinet door" \
-    --use-articulation \
-    --articulation-id 12536
-```
-
-**Custom positions:**
-```bash
-python scripts/graspvla/run_graspvla.py \
-    --instruction "pick up the mug" \
-    --object-position -0.05 0 0.15 \
-    --robot-position 0.5 0 0
-```
 
 ## 📁 Output
 
