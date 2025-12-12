@@ -13,7 +13,7 @@ my_robot_project/
 │   ├── __init__.py
 │   ├── base_env.py       # 定义统一接口 (如 reset, step)
 │   ├── sim/              # 仿真环境
-│   │   └── isaac_gym_env.py
+│   │   └── maniskill_env.py
 │   └── real/             # 真机环境
 │   │   ├── robot_driver.py
 │   │   └── real_env_wrapper.py
