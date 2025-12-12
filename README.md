@@ -1,5 +1,29 @@
 # 🤖 test_any_policy
 
+Planned structure
+
+```bash
+my_robot_project/
+├── data/                 # 存放训练数据或权重
+├── policies/             # 核心算法代码 (Shared)
+│   ├── __init__.py
+│   ├── actor_critic.py   # 网络结构
+│   └── inference.py      # 推理脚本
+├── envs/                 # 环境接口层
+│   ├── __init__.py
+│   ├── base_env.py       # 定义统一接口 (如 reset, step)
+│   ├── sim/              # 仿真环境
+│   │   └── isaac_gym_env.py
+│   └── real/             # 真机环境
+│   │   ├── robot_driver.py
+│   │   └── real_env_wrapper.py
+├── scripts/              # 启动脚本
+│   ├── train_sim.py
+│   └── deploy_real.py
+├── requirements.txt      # 依赖管理
+└── README.md
+```
+
 A ManiSkill-based project for visualizing any robotic policy or trajectory.
 
 ### 📦 Installation
