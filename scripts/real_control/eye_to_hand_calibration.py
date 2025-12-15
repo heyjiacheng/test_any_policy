@@ -672,8 +672,7 @@ class EyeToHandCalibrator:
         os.makedirs(CALIBRATION_SAVE_DIR, exist_ok=True)
 
         if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"eye_to_hand_calibration_{timestamp}.npz"
+            filename = "eye_to_hand_calibration.npz"
 
         filepath = os.path.join(CALIBRATION_SAVE_DIR, filename)
 
