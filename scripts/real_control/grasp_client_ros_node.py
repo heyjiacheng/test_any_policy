@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-DexDiffuser Grasp Generation Client
-====================================
+DexDiffuser Grasp Generation Client with ROS Integration
+========================================================
 
-This client controls an Azure Kinect camera to capture RGB-D data and sends
-it to the DexDiffuser Grasp Generation API server for grasp pose generation.
+This client controls an Azure Kinect camera to capture RGB-D data, sends
+it to the DexDiffuser Grasp Generation API server, and publishes the
+generated grasp poses to the Allegro Hand via ROS topics.
 
 Requirements:
     - pykinect-azure
@@ -12,24 +13,29 @@ Requirements:
     - opencv-python
     - requests
     - Pillow
+    - rospy
+    - sensor_msgs
 
 Usage:
-    python grasp_client.py --server http://localhost:8000 --objects "cup,bottle"
+    rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "cup"
 
-Author: Generated for DexDiffuser API client
+Author: Generated for DexDiffuser API client with ROS integration
 """
 
 import cv2
 import numpy as np
 import pykinect_azure as pykinect
 import requests
-import json
 import os
 import argparse
 import io
 import base64
 from typing import Optional, Tuple, Dict, Any
 
+# ROS imports
+import rospy
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Header
 
 # ============================================================================
 # Default Configuration
@@ -39,6 +45,14 @@ DEFAULT_TARGET_OBJECTS = "cup"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.1
 DEFAULT_NUM_SAMPLES = 32
 CALIBRATION_FILE = "./calibration_results/eye_to_hand_calibration.npz"
+
+# Allegro Hand joint names
+ALLEGRO_JOINT_NAMES = [
+    'joint_0_0', 'joint_1_0', 'joint_2_0', 'joint_3_0',
+    'joint_4_0', 'joint_5_0', 'joint_6_0', 'joint_7_0',
+    'joint_8_0', 'joint_9_0', 'joint_10_0', 'joint_11_0',
+    'joint_12_0', 'joint_13_0', 'joint_14_0', 'joint_15_0'
+]
 
 
 class AzureKinectClient:
@@ -273,6 +287,42 @@ class GraspGenerationClient:
             raise
 
 
+class AllegroHandPublisher:
+    """ROS publisher for Allegro Hand joint commands."""
+
+    def __init__(self):
+        """Initialize ROS publisher for Allegro Hand."""
+        self.joint_cmd_pub = rospy.Publisher(
+            '/allegroHand_0/joint_cmd',
+            JointState,
+            queue_size=10
+        )
+        rospy.loginfo("Allegro Hand publisher initialized")
+
+    def publish_joint_command(self, joint_positions: np.ndarray):
+        """
+        Publish joint command to Allegro Hand.
+
+        Args:
+            joint_positions: Array of 16 joint positions (in radians)
+        """
+        if len(joint_positions) != 16:
+            rospy.logerr(f"Expected 16 joint positions, got {len(joint_positions)}")
+            return
+
+        # Create JointState message
+        joint_state = JointState()
+        joint_state.header = Header()
+        joint_state.header.stamp = rospy.Time.now()
+        joint_state.name = ALLEGRO_JOINT_NAMES
+        joint_state.position = joint_positions.tolist()
+
+        # Publish
+        self.joint_cmd_pub.publish(joint_state)
+        rospy.loginfo(f"Published joint command to Allegro Hand")
+        rospy.loginfo(f"Joint positions: {joint_positions}")
+
+
 def save_results(result: Dict[str, Any], output_dir: str, target_objects: str) -> str:
     """
     Save grasp generation results to disk.
@@ -324,9 +374,12 @@ def save_results(result: Dict[str, Any], output_dir: str, target_objects: str) -
     print(f"Grasp pose shape: {grasp_qt.shape}")
     print(f"Best grasp index: {result['best_grasp_index']}")
     print(f"Best grasp score: {result['best_score']:.4f}")
-    print(f"\nBest grasp pose (25, last 16 is for the joints):")
+    print(f"\nBest grasp pose (23 dims, last 16 are joint positions):")
     best_grasp = np.array(result['best_grasp'])
-    print(f"  {best_grasp}")
+    print(f"  Full: {best_grasp}")
+    print(f"\nJoint positions (last 16 dims):")
+    joint_positions = best_grasp[9:]  # Extract last 16 dimensions
+    print(f"  {joint_positions}")
     print("="*60)
 
     return target_objects
@@ -346,7 +399,7 @@ def visualize_capture(rgb_image: np.ndarray, depth_image: np.ndarray, wait_time:
     depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
 
     # Create side-by-side visualization
-    h, w = rgb_image.shape[:2]
+    _, w = rgb_image.shape[:2]
     combined = np.hstack([rgb_image, depth_colored])
 
     # Add labels
@@ -362,21 +415,21 @@ def visualize_capture(rgb_image: np.ndarray, depth_image: np.ndarray, wait_time:
 
 
 def main():
-    """Main function to run grasp generation client."""
+    """Main function to run grasp generation client with ROS integration."""
     parser = argparse.ArgumentParser(
-        description='DexDiffuser Grasp Generation Client',
+        description='DexDiffuser Grasp Generation Client with ROS Integration',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Basic usage
-  python grasp_client.py --server http://localhost:8000 --objects "cup,bottle"
+  rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "cup"
 
   # With calibration file
-  python grasp_client.py --server http://192.168.1.100:8000 --objects "cup" \\
+  rosrun test_any_policy grasp_client_ros_node.py --server http://192.168.1.100:8000 --objects "cup" \\
       --calibration ./calibration_results/eye_to_hand_calibration.npz
 
   # With custom parameters
-  python grasp_client.py --server http://localhost:8000 --objects "bottle" \\
+  rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "bottle" \\
       --confidence 0.2 --samples 64 --output ./results --no-visualize
         """
     )
@@ -398,9 +451,14 @@ Examples:
 
     args = parser.parse_args()
 
-    # Initialize camera
+    # Initialize ROS node
+    rospy.init_node('grasp_client_ros_node', anonymous=True)
+    rospy.loginfo("Starting DexDiffuser Grasp Generation Client with ROS")
+
+    # Initialize camera, API client, and ROS publisher
     camera = AzureKinectClient(calibration_file=args.calibration)
     api_client = GraspGenerationClient(server_url=args.server)
+    allegro_publisher = AllegroHandPublisher()
 
     try:
         # Start camera
@@ -410,7 +468,7 @@ Examples:
         print("Press ENTER to capture image, or 'q' to quit")
         print("="*60)
 
-        while True:
+        while not rospy.is_shutdown():
             user_input = input("\nCapture image? (ENTER to capture, 'q' to quit): ").strip().lower()
 
             if user_input == 'q':
@@ -452,13 +510,28 @@ Examples:
             # Save results
             target_obj = save_results(result, args.output, args.objects)
 
+            # Extract last 16 dimensions (joint positions) from best_grasp
+            best_grasp = np.array(result['best_grasp'])
+            joint_positions = best_grasp[7:]  # Last 16 dimensions
+
+            print("\n" + "="*60)
+            print("PUBLISHING TO ALLEGRO HAND")
+            print("="*60)
+            print(f"Extracted joint positions (16 dims):")
+            print(f"  {joint_positions}")
+            print("="*60)
+
+            # Publish to Allegro Hand
+            allegro_publisher.publish_joint_command(joint_positions)
+
             print("\n✓ Processing complete!")
+            print(f"✓ Joint command published to /allegroHand_0/joint_cmd")
             print(f"\nContinue capturing? (Results saved for target object: {target_obj})")
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user.")
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        rospy.logerr(f"Error: {e}")
         raise
     finally:
         # Cleanup

@@ -38,7 +38,7 @@ from datetime import datetime
 # ============================================================================
 ARUCO_DICT_TYPE = cv2.aruco.DICT_ARUCO_ORIGINAL  # ArUco dictionary type
 ARUCO_MARKER_ID = 24  # ID of the marker to detect
-ARUCO_MARKER_SIZE = 0.1  # Marker side length in meters (100mm)
+ARUCO_MARKER_SIZE = 0.05  # Marker side length in meters (50mm)
 
 
 # ============================================================================
@@ -51,7 +51,7 @@ ROBOT_DYNAMICS_FACTOR = 0.1  # Robot speed factor (0.0-1.0)
 # ============================================================================
 # Camera Configuration
 # ============================================================================
-CAMERA_RESOLUTION = pykinect.K4A_COLOR_RESOLUTION_1080P
+CAMERA_RESOLUTION = pykinect.K4A_COLOR_RESOLUTION_2160P
 
 
 # ============================================================================
@@ -786,7 +786,7 @@ def main():
         epilog=f'Note: Attach ArUco marker (ID: {ARUCO_MARKER_ID}, size: {ARUCO_MARKER_SIZE*1000}mm) to robot end-effector before running.'
     )
     parser.add_argument('--mode', choices=['interactive', 'auto'],
-                       default='interactive',
+                       default='auto',
                        help='Calibration mode (default: interactive). Auto mode requires saved pose data.')
     parser.add_argument('--robot_ip', type=str, default=ROBOT_IP,
                        help=f'Robot IP address (default: {ROBOT_IP})')
