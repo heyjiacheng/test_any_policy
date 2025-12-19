@@ -5,7 +5,8 @@ DexDiffuser Grasp Generation Client with ROS Integration
 
 This client controls an Azure Kinect camera to capture RGB-D data, sends
 it to the DexDiffuser Grasp Generation API server, and publishes the
-generated grasp poses to the Allegro Hand via ROS topics.
+generated grasp poses to the Allegro Hand via ROS topics. Optionally, it
+can also control a Franka robot to execute the grasp pose.
 
 Requirements:
     - pykinect-azure
@@ -15,9 +16,15 @@ Requirements:
     - Pillow
     - rospy
     - sensor_msgs
+    - franky-control (optional, for Franka robot control)
 
 Usage:
+    # Basic usage (Allegro Hand only)
     rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "cup"
+
+    # With Franka robot control
+    rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "cup" \\
+        --control-franka --robot-ip 172.16.1.22
 
 Author: Generated for DexDiffuser API client with ROS integration
 """
@@ -36,15 +43,18 @@ from typing import Optional, Tuple, Dict, Any
 import rospy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
+from franky import Affine, Robot, CartesianMotion, ReferenceType
 
 # ============================================================================
 # Default Configuration
 # ============================================================================
 DEFAULT_SERVER_URL = "http://100.120.117.28:8000"
-DEFAULT_TARGET_OBJECTS = "cup"
+DEFAULT_TARGET_OBJECTS = "electric screwdriver"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.1
 DEFAULT_NUM_SAMPLES = 32
 CALIBRATION_FILE = "./calibration_results/eye_to_hand_calibration.npz"
+DEFAULT_ROBOT_IP = "172.16.1.22"
+DEFAULT_ROBOT_DYNAMICS_FACTOR = 0.1
 
 # Allegro Hand joint names
 ALLEGRO_JOINT_NAMES = [
@@ -323,6 +333,67 @@ class AllegroHandPublisher:
         rospy.loginfo(f"Joint positions: {joint_positions}")
 
 
+class FrankaRobotController:
+    """Franka robot controller for executing grasp poses."""
+
+    def __init__(self, robot_ip: str, dynamics_factor: float = DEFAULT_ROBOT_DYNAMICS_FACTOR):
+        """
+        Initialize Franka robot controller.
+
+        Args:
+            robot_ip: IP address of the Franka robot
+            dynamics_factor: Speed factor for robot motion (0.0-1.0)
+        """
+
+        self.robot_ip = robot_ip
+        self.dynamics_factor = dynamics_factor
+        self.robot = None
+
+    def connect(self):
+        """Connect to the robot."""
+        print(f"Connecting to Franka robot at {self.robot_ip}...")
+        self.robot = Robot(self.robot_ip)
+        self.robot.recover_from_errors()
+        self.robot.relative_dynamics_factor = self.dynamics_factor
+        print("Connected to Franka robot.")
+
+    def disconnect(self):
+        """Disconnect from the robot."""
+        self.robot = None
+        print("Disconnected from Franka robot.")
+
+    def move_to_pose(self, position: np.ndarray, quaternion: np.ndarray):
+        """
+        Move robot to specified pose using Cartesian motion.
+
+        Args:
+            position: 3D position [x, y, z] in meters
+            quaternion: Quaternion [qx, qy, qz, qw] for orientation
+        """
+        if self.robot is None:
+            raise RuntimeError("Robot not connected. Call connect() first.")
+
+        if len(position) != 3:
+            raise ValueError(f"Position must have 3 elements, got {len(position)}")
+
+        if len(quaternion) != 4:
+            raise ValueError(f"Quaternion must have 4 elements, got {len(quaternion)}")
+
+        # Create Affine transformation
+        affine = Affine(position.tolist(), quaternion.tolist())
+
+        # Create Cartesian motion (absolute pose)
+        motion = CartesianMotion(affine)
+
+        print(f"Moving robot to pose:")
+        print(f"  Position: {position}")
+        print(f"  Quaternion: {quaternion}")
+
+        # Execute motion
+        self.robot.move(motion)
+        print("Robot motion completed.")
+
+
 def save_results(result: Dict[str, Any], output_dir: str, target_objects: str) -> str:
     """
     Save grasp generation results to disk.
@@ -428,6 +499,10 @@ Examples:
   rosrun test_any_policy grasp_client_ros_node.py --server http://192.168.1.100:8000 --objects "cup" \\
       --calibration ./calibration_results/eye_to_hand_calibration.npz
 
+  # With Franka robot control
+  rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "cup" \\
+      --control-franka --robot-ip 172.16.1.22
+
   # With custom parameters
   rosrun test_any_policy grasp_client_ros_node.py --server http://localhost:8000 --objects "bottle" \\
       --confidence 0.2 --samples 64 --output ./results --no-visualize
@@ -448,6 +523,12 @@ Examples:
                        help='Output directory for results (default: ./grasp_results)')
     parser.add_argument('--no-visualize', action='store_true',
                        help='Skip visualization of captured images')
+    parser.add_argument('--control-franka', action='store_true',
+                       help='Enable Franka robot control using first 7 elements of best_grasp (position + quaternion)')
+    parser.add_argument('--robot-ip', type=str, default=DEFAULT_ROBOT_IP,
+                       help=f'Franka robot IP address (default: {DEFAULT_ROBOT_IP})')
+    parser.add_argument('--robot-dynamics', type=float, default=DEFAULT_ROBOT_DYNAMICS_FACTOR,
+                       help=f'Robot dynamics factor 0.0-1.0 (default: {DEFAULT_ROBOT_DYNAMICS_FACTOR})')
 
     args = parser.parse_args()
 
@@ -459,6 +540,15 @@ Examples:
     camera = AzureKinectClient(calibration_file=args.calibration)
     api_client = GraspGenerationClient(server_url=args.server)
     allegro_publisher = AllegroHandPublisher()
+
+    # Initialize Franka robot controller if enabled
+    franka_controller = None
+    if args.control_franka:
+        franka_controller = FrankaRobotController(
+            robot_ip=args.robot_ip,
+            dynamics_factor=args.robot_dynamics
+        )
+        franka_controller.connect()
 
     try:
         # Start camera
@@ -487,9 +577,9 @@ Examples:
             print(f"✓ Captured depth image: {depth_image.shape}")
 
             # Visualize if requested
-            if not args.no_visualize:
-                print("Displaying captured images for 3 seconds...")
-                visualize_capture(rgb_image, depth_image)
+            # if not args.no_visualize:
+            #     print("Displaying captured images for 3 seconds...")
+            #     visualize_capture(rgb_image, depth_image)
 
             # Get camera calibration
             intrinsics = camera.get_intrinsics_3x3()
@@ -510,10 +600,32 @@ Examples:
             # Save results
             target_obj = save_results(result, args.output, args.objects)
 
-            # Extract last 16 dimensions (joint positions) from best_grasp
+            # Extract pose from best_grasp
             best_grasp = np.array(result['best_grasp'])
-            joint_positions = best_grasp[7:]  # Last 16 dimensions
 
+            # First 7 elements: position (3) + quaternion (4)
+            position = best_grasp[:3]
+            quaternion = best_grasp[3:7]
+
+            # Last 16 elements: joint positions
+            joint_positions = best_grasp[7:]
+
+            # Control Franka robot if enabled
+            if args.control_franka:
+                print("\n" + "="*60)
+                print("CONTROLLING FRANKA ROBOT")
+                print("="*60)
+                print(f"Position (x, y, z): {position}")
+                print(f"Quaternion (qx, qy, qz, qw): {quaternion}")
+                print("="*60)
+
+                try:
+                    franka_controller.move_to_pose(position, quaternion)
+                    print("✓ Franka robot moved to grasp pose")
+                except Exception as e:
+                    rospy.logerr(f"Failed to control Franka robot: {e}")
+
+            # Publish to Allegro Hand
             print("\n" + "="*60)
             print("PUBLISHING TO ALLEGRO HAND")
             print("="*60)
@@ -521,11 +633,12 @@ Examples:
             print(f"  {joint_positions}")
             print("="*60)
 
-            # Publish to Allegro Hand
             allegro_publisher.publish_joint_command(joint_positions)
 
             print("\n✓ Processing complete!")
             print(f"✓ Joint command published to /allegroHand_0/joint_cmd")
+            if args.control_franka:
+                print(f"✓ Franka robot controlled")
             print(f"\nContinue capturing? (Results saved for target object: {target_obj})")
 
     except KeyboardInterrupt:
@@ -536,6 +649,8 @@ Examples:
     finally:
         # Cleanup
         camera.stop()
+        if franka_controller is not None:
+            franka_controller.disconnect()
         print("\nGrasp generation client terminated.")
 
 
