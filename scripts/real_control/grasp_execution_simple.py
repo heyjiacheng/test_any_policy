@@ -1,44 +1,66 @@
 #!/usr/bin/env python3
 """
-DexDiffuser Grasp Generation Client
-====================================
+DexDiffuser Grasp Execution Client - Simplified Version
+========================================================
 
-This client controls an Azure Kinect camera to capture RGB-D data and sends
-it to the DexDiffuser Grasp Generation API server for grasp pose generation.
+This is a simplified version that captures grasps and stores them,
+allowing you to manually execute them or integrate with your own execution logic.
+
+The 23-element grasp pose format:
+- Elements 0-3: Quaternion [qw, qx, qy, qz]
+- Elements 4-6: Position [x, y, z] in meters
+- Elements 7-22: Allegro joint angles (16 values)
 
 Requirements:
     - pykinect-azure
     - numpy
     - opencv-python
     - requests
-    - Pillow
+    - rospy
+    - geometry_msgs
+    - sensor_msgs
 
 Usage:
-    python grasp_client.py --server http://localhost:8000 --objects "cup,bottle"
+    rosrun test_any_policy grasp_execution_simple.py --server http://localhost:8000 --objects "cup"
 
-Author: Generated for DexDiffuser API client
+Author: Generated for DexDiffuser + Panda-Allegro integration
 """
 
 import cv2
 import numpy as np
 import pykinect_azure as pykinect
 import requests
-import json
 import os
 import argparse
 import io
 import base64
 from typing import Optional, Tuple, Dict, Any
 
+# ROS imports
+import rospy
+from sensor_msgs.msg import JointState
+from geometry_msgs.msg import PoseStamped, Pose, Quaternion, Point
+from std_msgs.msg import Header
 
 # ============================================================================
 # Default Configuration
 # ============================================================================
 DEFAULT_SERVER_URL = "http://100.120.117.28:8000"
-DEFAULT_TARGET_OBJECTS = "cup"
+DEFAULT_TARGET_OBJECTS = "cookie box"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.1
 DEFAULT_NUM_SAMPLES = 32
 CALIBRATION_FILE = "./calibration_results/eye_to_hand_calibration.npz"
+
+# Allegro Hand joint names
+ALLEGRO_JOINT_NAMES = [
+    'joint_0_0', 'joint_1_0', 'joint_2_0', 'joint_3_0',
+    'joint_4_0', 'joint_5_0', 'joint_6_0', 'joint_7_0',
+    'joint_8_0', 'joint_9_0', 'joint_10_0', 'joint_11_0',
+    'joint_12_0', 'joint_13_0', 'joint_14_0', 'joint_15_0'
+]
+
+# Frame ID for grasp poses
+GRASP_FRAME_ID = "panda_link0"
 
 
 class AzureKinectClient:
@@ -143,6 +165,7 @@ class AzureKinectClient:
 
         # Get color image
         ret_color, color_image = capture.get_color_image()
+
         if not ret_color:
             print("Failed to capture color image")
             return False, None, None
@@ -273,6 +296,76 @@ class GraspGenerationClient:
             raise
 
 
+class GraspPublisher:
+    """
+    Publishes grasp poses and joint commands to ROS topics.
+
+    This provides a way to visualize and store grasps without requiring
+    service definitions. You can manually execute them or integrate with
+    custom execution logic.
+    """
+
+    def __init__(self):
+        """Initialize ROS publishers."""
+        # Publisher for Franka end-effector grasp poses (for visualization/execution)
+        self.grasp_pose_pub = rospy.Publisher(
+            '/grasp_pose',
+            PoseStamped,
+            queue_size=10
+        )
+
+        # Publisher for Allegro Hand joint commands
+        self.allegro_joint_pub = rospy.Publisher(
+            '/allegroHand_0/joint_cmd',
+            JointState,
+            queue_size=10
+        )
+
+        rospy.loginfo("Grasp publishers initialized")
+        rospy.loginfo("  - Publishing grasp poses to: /grasp_pose")
+        rospy.loginfo("  - Publishing joint commands to: /allegroHand_0/joint_cmd")
+
+    def publish_grasp(self, grasp_23: np.ndarray, grasp_index: int = 0):
+        """
+        Publish a single grasp pose and joint command.
+
+        Args:
+            grasp_23: 23-element grasp array [qw,qx,qy,qz,x,y,z,joints(16)]
+            grasp_index: Index of this grasp (for header seq)
+        """
+        # Parse grasp format
+        qw, qx, qy, qz = grasp_23[0:4]
+        x, y, z = grasp_23[4:7]
+        joint_angles = grasp_23[7:23]
+
+        # Create and publish PoseStamped for Franka
+        pose_stamped = PoseStamped()
+        pose_stamped.header = Header()
+        pose_stamped.header.stamp = rospy.Time.now()
+        pose_stamped.header.frame_id = GRASP_FRAME_ID
+        pose_stamped.header.seq = grasp_index
+
+        pose_stamped.pose.position = Point(x=x, y=y, z=z)
+        pose_stamped.pose.orientation = Quaternion(x=qx, y=qy, z=qz, w=qw)
+
+        self.grasp_pose_pub.publish(pose_stamped)
+
+        # Create and publish JointState for Allegro
+        joint_state = JointState()
+        joint_state.header = Header()
+        joint_state.header.stamp = rospy.Time.now()
+        joint_state.header.seq = grasp_index
+        joint_state.name = ALLEGRO_JOINT_NAMES
+        joint_state.position = joint_angles.tolist()
+
+        self.allegro_joint_pub.publish(joint_state)
+
+        rospy.loginfo(f"Published grasp {grasp_index}:")
+        rospy.loginfo(f"  Position: [{x:.3f}, {y:.3f}, {z:.3f}]")
+        rospy.loginfo(f"  Orientation (quat): [{qw:.3f}, {qx:.3f}, {qy:.3f}, {qz:.3f}]")
+        rospy.loginfo(f"  Joint angles: {joint_angles}")
+
+
 def save_results(result: Dict[str, Any], output_dir: str, target_objects: str) -> str:
     """
     Save grasp generation results to disk.
@@ -324,60 +417,41 @@ def save_results(result: Dict[str, Any], output_dir: str, target_objects: str) -
     print(f"Grasp pose shape: {grasp_qt.shape}")
     print(f"Best grasp index: {result['best_grasp_index']}")
     print(f"Best grasp score: {result['best_score']:.4f}")
-    print(f"\nBest grasp pose (25, last 16 is for the joints):")
+    print(f"\nBest grasp pose (23 dims):")
     best_grasp = np.array(result['best_grasp'])
-    print(f"  {best_grasp}")
+    print(f"  Quaternion [qw,qx,qy,qz]: {best_grasp[0:4]}")
+    print(f"  Position [x,y,z]: {best_grasp[4:7]}")
+    print(f"  Joint angles (16): {best_grasp[7:23]}")
     print("="*60)
 
     return target_objects
 
 
-def visualize_capture(rgb_image: np.ndarray, depth_image: np.ndarray, wait_time: int = 3000):
-    """
-    Visualize captured RGB and depth images.
-
-    Args:
-        rgb_image: RGB image array
-        depth_image: Depth image array
-        wait_time: Time to display in milliseconds (0 = wait for key)
-    """
-    # Normalize depth for visualization
-    depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
-
-    # Create side-by-side visualization
-    h, w = rgb_image.shape[:2]
-    combined = np.hstack([rgb_image, depth_colored])
-
-    # Add labels
-    cv2.putText(combined, "RGB Image", (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2)
-    cv2.putText(combined, "Depth Image", (w + 20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2)
-
-    cv2.namedWindow('Captured RGB-D Data', cv2.WINDOW_NORMAL)
-    cv2.imshow('Captured RGB-D Data', combined)
-    cv2.waitKey(wait_time)
-    cv2.destroyAllWindows()
-
-
 def main():
-    """Main function to run grasp generation client."""
+    """Main function to run simplified grasp execution client."""
     parser = argparse.ArgumentParser(
-        description='DexDiffuser Grasp Generation Client',
+        description='DexDiffuser Grasp Execution Client - Simplified Version',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Basic usage
-  python grasp_client.py --server http://localhost:8000 --objects "cup,bottle"
-
-  # With calibration file
-  python grasp_client.py --server http://192.168.1.100:8000 --objects "cup" \\
-      --calibration ./calibration_results/eye_to_hand_calibration.npz
+  rosrun test_any_policy grasp_execution_simple.py --server http://localhost:8000 --objects "cup"
 
   # With custom parameters
-  python grasp_client.py --server http://localhost:8000 --objects "bottle" \\
-      --confidence 0.2 --samples 64 --output ./results --no-visualize
+  rosrun test_any_policy grasp_execution_simple.py --server http://192.168.1.100:8000 \\
+      --objects "bottle" --confidence 0.2 --samples 64
+
+This simplified version:
+  1. Captures RGB-D images from Azure Kinect
+  2. Sends to DexDiffuser API for grasp generation
+  3. Publishes grasp poses to /grasp_pose topic
+  4. Publishes joint commands to /allegroHand_0/joint_cmd topic
+  5. Saves results to disk
+
+You can:
+  - Visualize grasps in RViz
+  - Manually execute grasps using your own execution logic
+  - Integrate with custom control systems
         """
     )
 
@@ -393,31 +467,77 @@ Examples:
                        help=f'Path to calibration file (default: {CALIBRATION_FILE})')
     parser.add_argument('--output', type=str, default='./grasp_results',
                        help='Output directory for results (default: ./grasp_results)')
-    parser.add_argument('--no-visualize', action='store_true',
-                       help='Skip visualization of captured images')
+    parser.add_argument('--publish-all', action='store_true',
+                       help='Publish all generated grasps (default: only best grasp)')
 
     args = parser.parse_args()
 
-    # Initialize camera
+    # Initialize ROS node
+    rospy.init_node('grasp_execution_simple', anonymous=True)
+    rospy.loginfo("="*60)
+    rospy.loginfo("DexDiffuser Grasp Execution Client - Simplified")
+    rospy.loginfo("="*60)
+
+    # Initialize components
     camera = AzureKinectClient(calibration_file=args.calibration)
     api_client = GraspGenerationClient(server_url=args.server)
+    grasp_publisher = GraspPublisher()
+
+    # Storage for latest results
+    latest_results = None
 
     try:
         # Start camera
         camera.start()
 
         print("\n" + "="*60)
-        print("Press ENTER to capture image, or 'q' to quit")
+        print("READY TO CAPTURE AND PUBLISH GRASPS")
+        print("="*60)
+        print("Commands:")
+        print("  ENTER - Capture image and generate grasps")
+        print("  'p'   - Re-publish last best grasp")
+        print("  'a'   - Publish all grasps from last generation")
+        print("  'q'   - Quit")
         print("="*60)
 
-        while True:
-            user_input = input("\nCapture image? (ENTER to capture, 'q' to quit): ").strip().lower()
+        while not rospy.is_shutdown():
+            user_input = input("\nCommand (ENTER=capture, 'p'=publish, 'a'=publish all, 'q'=quit): ").strip().lower()
 
             if user_input == 'q':
                 print("Exiting...")
                 break
 
-            # Capture RGB-D data
+            elif user_input == 'p':
+                # Re-publish the best grasp
+                if latest_results is None:
+                    print("No grasps available! Capture and generate grasps first.")
+                    continue
+
+                best_grasp = np.array(latest_results['best_grasp'])
+                best_index = latest_results['best_grasp_index']
+
+                print(f"\nRe-publishing best grasp (index {best_index})...")
+                grasp_publisher.publish_grasp(best_grasp, best_index)
+                print("✓ Best grasp published to topics")
+                continue
+
+            elif user_input == 'a':
+                # Publish all grasps
+                if latest_results is None:
+                    print("No grasps available! Capture and generate grasps first.")
+                    continue
+
+                grasp_qt_list = latest_results['grasp_qt']
+                print(f"\nPublishing all {len(grasp_qt_list)} grasps...")
+
+                for i, grasp_23 in enumerate(grasp_qt_list):
+                    grasp_publisher.publish_grasp(np.array(grasp_23), i)
+                    rospy.sleep(0.1)  # Small delay between publishes
+
+                print(f"✓ Published all {len(grasp_qt_list)} grasps")
+                continue
+
+            # Capture and generate grasps (ENTER or empty input)
             print("\nCapturing RGB-D data...")
             success, rgb_image, depth_image = camera.capture_rgbd()
 
@@ -427,11 +547,6 @@ Examples:
 
             print(f"✓ Captured RGB image: {rgb_image.shape}")
             print(f"✓ Captured depth image: {depth_image.shape}")
-
-            # Visualize if requested
-            if not args.no_visualize:
-                print("Displaying captured images for 3 seconds...")
-                visualize_capture(rgb_image, depth_image)
 
             # Get camera calibration
             intrinsics = camera.get_intrinsics_3x3()
@@ -452,18 +567,46 @@ Examples:
             # Save results
             target_obj = save_results(result, args.output, args.objects)
 
+            # Store latest results
+            latest_results = result
+
+            # Publish grasps
+            if args.publish_all:
+                # Publish all grasps
+                grasp_qt_list = result['grasp_qt']
+                print(f"\nPublishing all {len(grasp_qt_list)} grasps...")
+                for i, grasp_23 in enumerate(grasp_qt_list):
+                    grasp_publisher.publish_grasp(np.array(grasp_23), i)
+                    rospy.sleep(0.1)
+                print(f"✓ Published all {len(grasp_qt_list)} grasps")
+            else:
+                # Publish only best grasp
+                best_grasp = np.array(result['best_grasp'])
+                best_index = result['best_grasp_index']
+                print(f"\nPublishing best grasp (index {best_index})...")
+                grasp_publisher.publish_grasp(best_grasp, best_index)
+                print("✓ Best grasp published to topics")
+
             print("\n✓ Processing complete!")
-            print(f"\nContinue capturing? (Results saved for target object: {target_obj})")
+            print(f"✓ Results saved to {args.output}")
+            print(f"✓ Grasp poses published to /grasp_pose")
+            print(f"✓ Joint commands published to /allegroHand_0/joint_cmd")
+            print("\nNext steps:")
+            print("  - Press 'p' to re-publish the best grasp")
+            print("  - Press 'a' to publish all grasps")
+            print("  - Press ENTER to capture new image")
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user.")
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        rospy.logerr(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         raise
     finally:
         # Cleanup
         camera.stop()
-        print("\nGrasp generation client terminated.")
+        print("\nGrasp execution client terminated.")
 
 
 if __name__ == '__main__':

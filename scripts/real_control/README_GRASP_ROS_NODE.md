@@ -15,9 +15,28 @@ This script is a ROS-integrated. It can:
 
 ### Conda Environment Setup
 ```bash
-conda create -n ros_franka python=3.8 -y
+conda create -n ros_franka python=3.9 -y
 conda activate ros_franka
-pip install opencv-python pykinect_azure requests pyyaml rospkg attrs pluggy
+pip install opencv-python pykinect_azure requests
+conda install ros-noetic-rospy ros-noetic-common-msgs
+```
+
+**trouble conda install**
+```bash
+conda config --env --add channels conda-forge
+conda config --env --add channels robostack-staging
+conda config --env --set channel_priority strict
+conda install ros-noetic-rospy ros-noetic-common-msgs
+```
+
+### install franky
+due to old firm of franka arm, use:
+```bash
+VERSION=0-9-2
+wget https://github.com/TimSchneider42/franky/releases/latest/download/libfranka_${VERSION}_wheels.zip
+unzip libfranka_${VERSION}_wheels.zip
+pip install numpy
+pip install --no-index --find-links=./dist franky-control
 ```
 
 ## Usage
@@ -42,6 +61,10 @@ python api_server.py
 #### Basic Usage
 ```bash
 python scripts/real_control/grasp_client_ros_node.py
+```
+if you're on SSH
+```bash
+DISPLAY=:0 python scripts/real_control/grasp_client_ros_node.py
 ```
 
 #### Specify Server and Object

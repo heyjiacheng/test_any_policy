@@ -49,7 +49,7 @@ from franky import Affine, Robot, CartesianMotion, ReferenceType
 # Default Configuration
 # ============================================================================
 DEFAULT_SERVER_URL = "http://100.120.117.28:8000"
-DEFAULT_TARGET_OBJECTS = "electric screwdriver"
+DEFAULT_TARGET_OBJECTS = "cookie box"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.1
 DEFAULT_NUM_SAMPLES = 32
 CALIBRATION_FILE = "./calibration_results/eye_to_hand_calibration.npz"
@@ -167,6 +167,7 @@ class AzureKinectClient:
 
         # Get color image
         ret_color, color_image = capture.get_color_image()
+
         if not ret_color:
             print("Failed to capture color image")
             return False, None, None
@@ -601,11 +602,17 @@ Examples:
             target_obj = save_results(result, args.output, args.objects)
 
             # Extract pose from best_grasp
+            # API format: [qw, qx, qy, qz, x, y, z, joint_angles...]
             best_grasp = np.array(result['best_grasp'])
 
-            # First 7 elements: position (3) + quaternion (4)
-            position = best_grasp[:3]
-            quaternion = best_grasp[3:7]
+            # First 4 elements: quaternion [qw, qx, qy, qz]
+            qw, qx, qy, qz = best_grasp[0:4]
+
+            # Next 3 elements: position [x, y, z]
+            position = best_grasp[4:7]
+
+            # Franky expects quaternion in [qx, qy, qz, qw] format
+            quaternion = np.array([qx, qy, qz, qw])
 
             # Last 16 elements: joint positions
             joint_positions = best_grasp[7:]
