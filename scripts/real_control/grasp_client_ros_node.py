@@ -450,7 +450,7 @@ def save_results(result: Dict[str, Any], output_dir: str, target_objects: str) -
     best_grasp = np.array(result['best_grasp'])
     print(f"  Full: {best_grasp}")
     print(f"\nJoint positions (last 16 dims):")
-    joint_positions = best_grasp[9:]  # Extract last 16 dimensions
+    joint_positions = best_grasp[7:]  # Extract last 16 dimensions
     print(f"  {joint_positions}")
     print("="*60)
 
