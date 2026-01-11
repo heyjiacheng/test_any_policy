@@ -21,7 +21,7 @@ A robotic manipulation framework integrating vision-language-action models with 
 - Calibrate Azure Kinect to Franka base frame
 - Interactive and automatic modes with ArUco markers
 
-**[Grasp ROS Node →](scripts/real_control/README_GRASP_ROS_NODE.md)**
+**[Grasp Client →](scripts/real_control/README_GRASP_CLIENT.md)**
 - ROS-integrated grasp execution
 - RGB-D capture and DexDiffuser API integration
 - Allegro Hand control via joint commands
@@ -36,7 +36,7 @@ python scripts/graspvla/run_graspvla_ycb.py --instruction "pick up the mug"
 python scripts/real_control/eye_to_hand_calibration.py --mode interactive
 
 # 3. Deploy to real robot
-python scripts/real_control/grasp_client_ros_node.py --objects "cup"
+python scripts/real_control/grasp_client.py --objects "cup"
 ```
 
 ## 📂 Structure

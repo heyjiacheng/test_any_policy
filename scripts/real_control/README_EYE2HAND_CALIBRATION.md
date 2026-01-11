@@ -93,21 +93,6 @@ python eye_to_hand_calibration.py --mode auto
 
 ---
 
-## 📝 Additional Options
-
-```bash
-# Specify robot IP address
-python eye_to_hand_calibration.py --robot_ip 172.16.1.22
-
-# Custom pose data file path
-python eye_to_hand_calibration.py --pose_data ./my_poses.npz
-
-# Custom output filename for calibration result
-python eye_to_hand_calibration.py --output my_calibration.npz
-```
-
----
-
 ## 📂 Output Files
 
 Calibration results saved to `./calibration_results/`:
@@ -117,8 +102,3 @@ Calibration results saved to `./calibration_results/`:
 
 ---
 
-## ✅ Tested Environments
-
-- ✅ Ubuntu 20.04
-- ✅ Ubuntu 22.04
-- ✅ Python 3.12

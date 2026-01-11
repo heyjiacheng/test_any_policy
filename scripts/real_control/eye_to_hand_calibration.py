@@ -38,7 +38,7 @@ from datetime import datetime
 # ============================================================================
 ARUCO_DICT_TYPE = cv2.aruco.DICT_ARUCO_ORIGINAL  # ArUco dictionary type
 ARUCO_MARKER_ID = 24  # ID of the marker to detect
-ARUCO_MARKER_SIZE = 0.05  # Marker side length in meters (50mm)
+ARUCO_MARKER_SIZE = 0.04  # Marker side length in meters (40mm)
 
 
 # ============================================================================
@@ -51,7 +51,7 @@ ROBOT_DYNAMICS_FACTOR = 0.1  # Robot speed factor (0.0-1.0)
 # ============================================================================
 # Camera Configuration
 # ============================================================================
-CAMERA_RESOLUTION = pykinect.K4A_COLOR_RESOLUTION_2160P
+CAMERA_RESOLUTION = pykinect.K4A_COLOR_RESOLUTION_3072P
 
 
 # ============================================================================
@@ -167,6 +167,7 @@ class AzureKinectCamera:
 
         # Configure device
         self.device_config = pykinect.default_configuration
+        self.device_config.camera_fps = pykinect.K4A_FRAMES_PER_SECOND_5
         self.device_config.color_format = pykinect.K4A_IMAGE_FORMAT_COLOR_BGRA32
         self.device_config.color_resolution = CAMERA_RESOLUTION
         self.device_config.depth_mode = pykinect.K4A_DEPTH_MODE_NFOV_UNBINNED
