@@ -10,7 +10,7 @@ launch ros node to control allegro hand
 cd ~/dexdiff
 source devel/setup.bash
 ./switch_to_pcan.sh
-roslaunch panda_moveit panda_moveit_allegro.launch
+roslaunch allegro_hand_controllers allegro_hand_franka.launch
 ```
 
 ## Quick Start

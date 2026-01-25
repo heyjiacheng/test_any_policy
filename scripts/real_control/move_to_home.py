@@ -24,13 +24,13 @@ DEFAULT_ROBOT_IP = "172.16.1.22"
 DEFAULT_ROBOT_DYNAMICS_FACTOR = 0.1
 
 # Franka home position (joint angles in radians)
-FRANKA_HOME_POSITION = [0.0, -0.78, 0.0, -2.36, 0.0, 1.57, 0.78]
+FRANKA_HOME_POSITION = [-0.01582962, -1.64610057, -0.04303553, -2.8760081, -0.00995815, 1.74168246, 0.78718844]
 
 # Allegro Hand home position (joint angles in degrees, will be converted to radians)
 ALLEGRO_HOME_POSITION_DEG = [
-    0., -10., 45., 45.,   # Index finger
-    0., -10., 45., 45.,   # Middle finger
-    5., -5., 50., 45.,    # Ring finger
+    0., 80., 45., 45.,   # Index finger
+    0., 80., 45., 45.,   # Middle finger
+    5., 85., 50., 45.,    # Ring finger
     5., 5., 5., 5.        # Thumb
 ]
 
