@@ -28,10 +28,10 @@ FRANKA_HOME_POSITION = [-0.01582962, -1.64610057, -0.04303553, -2.8760081, -0.00
 
 # Allegro Hand home position (joint angles in degrees, will be converted to radians)
 ALLEGRO_HOME_POSITION_DEG = [
-    0., 80., 45., 45.,   # Index finger
-    0., 80., 45., 45.,   # Middle finger
-    5., 85., 50., 45.,    # Ring finger
-    5., 5., 5., 5.        # Thumb
+    0., 10., 15., 15.,   # Index finger
+    0., 10., 15., 15.,   # Middle finger
+    5., 15., 10., 15.,    # Ring finger
+    90., 5., 5., 5.        # Thumb
 ]
 
 # Allegro Hand joint names
@@ -136,12 +136,13 @@ def main():
         # Give ROS publisher time to initialize
         time.sleep(0.5)
 
-        # Move Allegro Hand to home position
-        allegro_publisher.move_to_home()
-        time.sleep(1.0)  # Wait for hand to reach home position
-
         # Move Franka robot to home position
         success = franka_controller.move_to_home()
+
+        time.sleep(1.0)  # Wait for hand to reach home position
+
+        # Move Allegro Hand to home position
+        allegro_publisher.move_to_home()
 
         if success:
             print("\n" + "="*60)

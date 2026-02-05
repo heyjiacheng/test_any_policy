@@ -21,11 +21,15 @@ conda activate ros_franka
 
 ```bash
 # Basic usage (uses defaults)
-python3 grasp_client.py
+python3 grasp_client_jc.py
 
 # Custom object
 python3 grasp_client.py --objects "cup"
+
+#eye in hand support
+python3 grasp_client_jc.py --eye-in-hand
 ```
+
 
 ## Defaults
 

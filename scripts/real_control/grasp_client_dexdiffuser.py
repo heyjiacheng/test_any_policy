@@ -37,16 +37,19 @@ from franky import Affine, Robot, CartesianMotion, JointMotion
 # Default Configuration
 # ============================================================================
 DEFAULT_SERVER_URL = "http://100.122.228.55:8000"
-DEFAULT_TARGET_OBJECTS = "blue box"
+# DEFAULT_TARGET_OBJECTS = "pringles can"
+# DEFAULT_TARGET_OBJECTS = "blue pasta box"
+DEFAULT_TARGET_OBJECTS = "red box"
+# DEFAULT_TARGET_OBJECTS = "milk"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.1
-DEFAULT_NUM_SAMPLES = 32
+DEFAULT_NUM_SAMPLES = 100
 
 # Calibration Files
 CALIBRATION_FILE_EYE_TO_HAND = "./calibration_results/eye_to_hand_calibration.npz"
 CALIBRATION_FILE_EYE_ON_HAND = "./calibration_results/eye_on_hand_calibration.npz"
 
 DEFAULT_ROBOT_IP = "172.16.1.22"
-DEFAULT_ROBOT_DYNAMICS_FACTOR = 0.03
+DEFAULT_ROBOT_DYNAMICS_FACTOR = 0.06
 
 # ----------------------------------------------------------------------------
 # Flange to Palm Transformation Configuration
@@ -61,10 +64,10 @@ FRANKA_HOME_POSITION = [0.0, -0.78, 0.0, -2.36, 0.0, 1.57, 0.78]
 
 # Allegro Hand home position (joint angles in degrees -> radians)
 ALLEGRO_HOME_POSITION_DEG = [
-    0., 0., 45., 45.,   # Index
-    0., 0., 45., 45.,   # Middle
-    5., 5., 50., 45.,    # Ring
-    5., 5., 5., 5.        # Thumb
+    0., 10., 15., 15.,   # Index finger
+    0., 10., 15., 15.,   # Middle finger
+    5., 15., 10., 15.,    # Ring finger
+    90., 5., 5., 5.        # Thumb
 ]
 
 ALLEGRO_JOINT_NAMES = [
@@ -168,7 +171,7 @@ class AzureKinectClient:
         self.device_config = pykinect.default_configuration
         self.device_config.camera_fps = pykinect.K4A_FRAMES_PER_SECOND_15
         self.device_config.color_format = pykinect.K4A_IMAGE_FORMAT_COLOR_BGRA32
-        self.device_config.color_resolution = pykinect.K4A_COLOR_RESOLUTION_1440P
+        self.device_config.color_resolution = pykinect.K4A_COLOR_RESOLUTION_720P
         self.device_config.depth_mode = pykinect.K4A_DEPTH_MODE_WFOV_UNBINNED
         self.device = None
         self.camera_matrix = None
@@ -333,7 +336,7 @@ class FrankaRobotController:
         self.robot = None
         # Load the constant Hand-Flange transform
         self.T_flange_palm = get_flange_to_palm_transform()
-        self.T_palm_flange = np.linalg.inv(self.T_flange_palm) # Inverse for calculation
+        self.T_palm_flange = np.linalg.inv(self.T_flange_palm) 
 
     def connect(self):
         if self.robot is not None:
@@ -386,16 +389,10 @@ class FrankaRobotController:
         # We want to be 15cm back from the object *along the palm's approach vector*
         # Assuming Palm X is approach.
         T_palm_pre = np.eye(4)
-        T_palm_pre[0, 3] = -0.15 
+        T_palm_pre[0, 3] = -0.1  # 10cm back for pre-grasp
 
-        T_palm_post = np.eye(4)
-        T_palm_post[0, 3] = 0.08  # 8cm forward for post-grasp lift
-        
         # Calculate T_base_palm_pre (Where the palm should be for pre-grasp)
         T_base_palm_pre = np.dot(T_base_palm, T_palm_pre)
-
-        # Calculate T_base_palm_post (Where the palm should be for post-grasp)
-        T_base_palm_post = np.dot(T_base_palm, T_palm_post)
 
         # 3. Solve for Flange Target (T_base_flange)
         # Relation: T_base_palm = T_base_flange * T_flange_palm
@@ -410,15 +407,11 @@ class FrankaRobotController:
         # Pre-Grasp Flange Pose
         T_base_flange_pre = np.dot(T_base_palm_pre, self.T_palm_flange)
         pre_pos, pre_quat = matrix_to_pos_quat(T_base_flange_pre)
-        
-        # Post-Grasp pose
-        T_base_flange_post = np.dot(T_base_palm_post, self.T_palm_flange)
-        post_pos, post_quat = matrix_to_pos_quat(T_base_flange_post)
 
-        # 4. Calculate Lift Pose (World Frame, relative to final flange pose)
-        lift_pos = post_pos.copy() 
+        # 4. Calculate Lift Pose (World Frame, relative to final grasp flange pose)
+        lift_pos = robot_grasp_pos.copy()
         lift_pos[2] += 0.15  # Global Z lift
-        lift_quat = post_quat.copy()
+        lift_quat = robot_grasp_quat.copy()
 
 
         print("\n=== Starting Grasp Sequence (Precise Hand Transform) ===")
@@ -426,20 +419,27 @@ class FrankaRobotController:
         print(f"Flange Target: {robot_grasp_pos}")
         
         # --- Step A: Move to Pre-Grasp ---
-        print(f"1. Moving to Pre-Grasp Pose...")
+        print(f"1. Moving to Pre-Grasp Pose (10cm back)...")
         affine_pre = Affine(pre_pos.tolist(), pre_quat.tolist())
         self.robot.move(CartesianMotion(affine_pre))
-        
-        # --- Step B: Approach ---
-        print(f"2. Approaching Grasp Pose...")
-        affine_grasp = Affine(post_pos.tolist(), post_quat.tolist())
+
+        # --- Step B: Approach to Final Grasp Position ---
+        print(f"2. Approaching Final Grasp Pose...")
+        affine_grasp = Affine(robot_grasp_pos.tolist(), robot_grasp_quat.tolist())
         self.robot.move(CartesianMotion(affine_grasp))
-        
+
         # --- Step C: Close Hand ---
         print(f"3. Closing Hand...")
-        hand_publisher.publish_joint_command(joint_angles)
-        time.sleep(2.0)
-        
+        # Gradually close hand with 10 intermediate positions
+        home_joints = hand_publisher.home_position
+        num_steps = 10
+        for i in range(1, num_steps + 1):
+            alpha = i / num_steps
+            intermediate_joints = home_joints + alpha * (joint_angles - home_joints)
+            hand_publisher.publish_joint_command(intermediate_joints)
+            time.sleep(0.3)
+        time.sleep(1.0)
+
         # --- Step D: Lift ---
         print(f"4. Lifting Object...")
         affine_lift = Affine(lift_pos.tolist(), lift_quat.tolist())
@@ -527,7 +527,7 @@ def main():
                 print("Sending data to server...")
                 api_client.process_grasp(
                     rgb, depth, camera.get_intrinsics_3x3(), args.objects, 
-                    camera_extrinsics=T_base_cam
+                    camera_extrinsics=T_base_cam, num_samples=DEFAULT_NUM_SAMPLES,
                 )
                 print(">>> Visualization launched on server.")
             except Exception as e:
@@ -566,7 +566,7 @@ def main():
                         if franka_controller.move_to_home():
                             time.sleep(0.5)
                             # make joint_position all joint angle bigger
-                            joint_positions = np.array(joint_positions) * 1.3
+                            joint_positions = np.array(joint_positions) + 0.3
                             franka_controller.execute_grasp_sequence(
                                 position, quat_xyzw, allegro_publisher, joint_positions
                             )
